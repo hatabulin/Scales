@@ -1,0 +1,957 @@
+
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * This notice applies to any and all portions of this file
+  * that are not between comment pairs USER CODE BEGIN and
+  * USER CODE END. Other portions of this file, whether 
+  * inserted by the user or by software development tools
+  * are owned by their respective copyright owners.
+  *
+  * Copyright (c) 2019 STMicroelectronics International N.V. 
+  * All rights reserved.
+  *
+  * Redistribution and use in source and binary forms, with or without 
+  * modification, are permitted, provided that the following conditions are met:
+  *
+  * 1. Redistribution of source code must retain the above copyright notice, 
+  *    this list of conditions and the following disclaimer.
+  * 2. Redistributions in binary form must reproduce the above copyright notice,
+  *    this list of conditions and the following disclaimer in the documentation
+  *    and/or other materials provided with the distribution.
+  * 3. Neither the name of STMicroelectronics nor the names of other 
+  *    contributors to this software may be used to endorse or promote products 
+  *    derived from this software without specific written permission.
+  * 4. This software, including modifications and/or derivative works of this 
+  *    software, must execute solely and exclusively on microcontroller or
+  *    microprocessor devices manufactured by or for STMicroelectronics.
+  * 5. Redistribution and use of this software other than as permitted under 
+  *    this license is void and will automatically terminate your rights under 
+  *    this license. 
+  *
+  * THIS SOFTWARE IS PROVIDED BY STMICROELECTRONICS AND CONTRIBUTORS "AS IS" 
+  * AND ANY EXPRESS, IMPLIED OR STATUTORY WARRANTIES, INCLUDING, BUT NOT 
+  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A 
+  * PARTICULAR PURPOSE AND NON-INFRINGEMENT OF THIRD PARTY INTELLECTUAL PROPERTY
+  * RIGHTS ARE DISCLAIMED TO THE FULLEST EXTENT PERMITTED BY LAW. IN NO EVENT 
+  * SHALL STMICROELECTRONICS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+  * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, 
+  * OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF 
+  * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
+  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  *
+  ******************************************************************************
+  */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "stm32f1xx_hal.h"
+#include "cmsis_os.h"
+#include "usb_device.h"
+
+/* USER CODE BEGIN Includes */
+//#include "float.h"
+//#include "stdio.h"
+#include "string.h"
+#include "hx711.h"
+#include "TM1638.h"
+#include "eeprom.h"
+//#include "lcd.h"
+/* USER CODE END Includes */
+
+/* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi1;
+
+TIM_HandleTypeDef htim3;
+
+UART_HandleTypeDef huart3;
+
+osThreadId defaultTaskHandle;
+osMutexId myMutex01Handle;
+
+/* USER CODE BEGIN PV */
+extern USBD_HandleTypeDef hUsbDeviceFS;
+osThreadId KeyboardTaskHandle;
+SemaphoreHandle_t xMutex = NULL;
+
+#define BUFF_REP_SIZE 20
+//#define _DEBUG
+//#define _LCD
+#define SCALE  0.0000103f
+#define OFFSET -89280.0f
+
+#define EE_100gLevel 0
+#define EE_200gLevel 1
+#define EE_ZeroLevel 2
+#define EE_BulkMode  3
+
+//Change this calibration factor as per your load cell once it is found you many need to vary it in thousands
+//float calibration_factor = -96650; //-106600 worked for my 40Kg max scale setup
+//#define myConst 44.60
+#define	NUM_CAL	50
+
+float ounces, units;
+uint8_t flag_usb;
+HX711 hx711_config;
+uint8_t key;
+
+int32_t RealZeroLevel = 478191;
+int32_t Real100gLevel = 568495;
+int32_t Real200gLevel = 659005;
+int32_t ZeroLevel = 478191;
+int32_t _100gLevel = 568495;
+int32_t _200gLevel = 659005;
+int32_t Data = 0;
+int32_t Values = 0;
+int32_t Delta = 0;
+int32_t middle = 0;
+int32_t value;
+
+float Weight = 0.0f;
+float OldWeight = 0.0f;
+int DataStore[NUM_CAL] ={0};
+uint8_t key;
+uint8_t bulk_mode;
+
+// USBHID BEGIN
+//extern USBD_HandleTypeDef  *hUsbDeviceFS;
+uint8_t dataToReceive[4];
+unsigned char dataToSend[BUFF_REP_SIZE];
+//char answer[512];
+// USBHID END
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_SPI1_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_TIM3_Init(void);
+void StartDefaultTask(void const * argument);
+
+/* USER CODE BEGIN PFP */
+/* Private function prototypes -----------------------------------------------*/
+extern void ModbusRTUTask(void const * argument);
+void StartKeyboardTask(void const * argument);
+void beep(uint16_t i);
+/* USER CODE END PFP */
+
+/* USER CODE BEGIN 0 */
+void spi_Send(uint8_t data)
+{
+		HAL_SPI_Transmit(&hspi1, &data, 1, 1000);
+}
+
+void WriteConstantToEEP()
+{
+	EE_Write(EE_100gLevel, _100gLevel); //
+	EE_Write(EE_200gLevel, _200gLevel); //
+	EE_Write(EE_ZeroLevel, ZeroLevel); //
+//	EE_Write(EE_BulkMode, bulk_mode); //
+}
+void ReadConstantsFromEEP()
+{
+	uint32_t data_;
+	EE_Read(EE_100gLevel,&data_); _100gLevel = data_;
+	EE_Read(EE_200gLevel,&data_); _200gLevel = data_;
+	EE_Read(EE_ZeroLevel,&data_); ZeroLevel = data_;
+	EE_Read(EE_BulkMode,&data_); bulk_mode = data_;
+	Real100gLevel = _100gLevel ;
+	Real200gLevel = _200gLevel ;
+	RealZeroLevel =  ZeroLevel ;
+}
+//=================================================================================//
+//++++++++++++++++++++++++++++ читаем память TM1638 +++++++++++++++++++++++++++++++//
+//=================================================================================//
+void spi_Read_Reg( uint8_t data_mas[])
+{//+
+	uint8_t key_Reg_Adr =0x42;
+	  SPI1->CR1 |= SPI_CR1_BIDIOE;
+		HAL_SPI_Transmit(&hspi1,&key_Reg_Adr , 1, 1000);
+ 	  SPI1->CR1 &= ~SPI_CR1_BIDIOE;
+	  HAL_SPI_Receive(&hspi1, data_mas, 4, 1000);
+	  SPI1->CR1 |= SPI_CR1_BIDIOE;
+}
+//=================================================================================//
+
+int32_t ReadCount(void)
+{
+    return HX711_Value(hx711_config) - 8000000;
+}
+
+int32_t GetMiddleFilterValue(int32_t rc)
+{
+	uint32_t max = 0;
+	uint32_t min = 0;
+	uint32_t sum = 0;
+	uint8_t i = 0;
+
+	max = min = sum = DataStore[0] = rc;
+
+	for(i=NUM_CAL-1; i!= 0; i--)
+	{
+		if(DataStore[i] > max)
+			max = DataStore[i];
+		else if(DataStore[i] < min)
+			min = DataStore[i];
+
+		sum = sum + DataStore[i];
+		DataStore[i] = DataStore[i - 1];
+	}
+
+	i = NUM_CAL - 2;
+	sum = sum - max - min;// + i/2;
+	sum = sum/i;
+
+	return sum;
+}
+
+void Calibrate(int32_t rc)
+{
+	Values = 0;
+
+	for (uint8_t i = 0;i<NUM_CAL;i++)
+	{
+		Values += GetMiddleFilterValue(ReadCount());
+	}
+	RealZeroLevel = Values / NUM_CAL;
+	RealZeroLevel = GetMiddleFilterValue(ReadCount());
+
+	Delta = RealZeroLevel - ZeroLevel;
+	Real100gLevel =	_100gLevel + Delta;
+	Real200gLevel = _200gLevel + Delta;
+}
+
+void DynamicBright(uint8_t num)
+{
+	for (uint8_t j=1;j<num;j++)
+	{
+		osDelay(10);
+		for (uint8_t i=7;i>0;i--)
+		{
+		tm1638_Bright(i);
+			osDelay(10);
+		}
+		for (uint8_t i=0;i<7;i++)
+		{
+			tm1638_Bright(i);
+			osDelay(10);
+		}
+	}
+}
+
+void DynamicBright2(uint8_t num)
+{
+	for (uint8_t j=1;j<num;j++)
+	{
+		if (tm1638_ReadKeys() != 0) return;
+		osDelay(10);
+		for (uint8_t i=7;i>0;i--)
+		{
+			tm1638_Bright(i);
+			if (tm1638_ReadKeys() != 0) return;
+			osDelay(10);
+		}
+		for (uint8_t i=0;i<7;i++)
+		{
+			tm1638_Bright(i);
+			if (tm1638_ReadKeys() != 0) return;
+			osDelay(10);
+		}
+	}
+}
+
+void beep(uint16_t i)
+{
+	  HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin,GPIO_PIN_SET);
+	  HAL_Delay(i);
+	  HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin,GPIO_PIN_RESET);
+}
+
+void ReadEEprom(void)
+{
+	uint32_t data_;
+	EE_Read(5,&data_);
+	if (data_!= 0x888)
+	{
+		beep(500);
+		HAL_Delay(50);
+		beep(100);
+		HAL_Delay(50);
+		beep(100);
+		HAL_Delay(50);
+		beep(100);
+		EE_Format();
+		WriteConstantToEEP();
+		EE_Write(5,0x888);
+	 } else
+	 {
+		 beep(10);
+		 ReadConstantsFromEEP();
+	 }
+}
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  *
+  * @retval None
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
+
+  /* MCU Configuration----------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_SPI1_Init();
+  MX_USART3_UART_Init();
+  MX_TIM3_Init();
+  /* USER CODE BEGIN 2 */
+  hx711_config.gpioSck = GPIOA;// GPIOB;
+  hx711_config.gpioData = GPIOA; //GPIOB;
+  hx711_config.pinSck = GPIO_PIN_3; // GPIO_PIN_9;
+  hx711_config.pinData = GPIO_PIN_2; // GPIO_PIN_8;
+  hx711_config.gain = 1;
+  hx711_config.offset = 0;
+
+#ifdef _LCD
+  LCD_ini();
+  LCD_SetPos(1, 0);
+  sprintf(answer,"Scales ver.1");
+  LCD_String(answer);
+#endif
+#ifdef _DEBUG
+  snprintf(answer, sizeof(answer),"HX711 init...\n\r");
+  status = HAL_UART_Transmit(&huart3, (uint8_t*)answer,strlen(answer), HAL_MAX_DELAY);
+#endif
+
+#ifdef _DEBUG
+  snprintf(answer, sizeof(answer),"data offset = #8d\n\r",HX711_Value(hx711_config) );
+  status = HAL_UART_Transmit(&huart3, (uint8_t*)answer,strlen(answer), HAL_MAX_DELAY);
+  snprintf(answer, sizeof(answer),"HX711 Tare...\n\r" );
+  status = HAL_UART_Transmit(&huart3, (uint8_t*)answer,strlen(answer), HAL_MAX_DELAY);
+#endif
+  OldWeight = 65533;
+  beep(1);
+  tm1638_Init(3); // contrast
+  tm1638_Digit(888888,1); // segment
+
+  hx711_config = HX711_Tare(hx711_config,20);
+  HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,SET);
+  ReadEEprom();
+  /* USER CODE END 2 */
+
+  /* Create the mutex(es) */
+  /* definition and creation of myMutex01 */
+  osMutexDef(myMutex01);
+  myMutex01Handle = osMutexCreate(osMutex(myMutex01));
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 1024);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  osThreadDef(KeyboardTask, StartKeyboardTask, osPriorityNormal, 0, 256);
+  KeyboardTaskHandle = osThreadCreate(osThread(KeyboardTask), NULL);
+
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+ 
+
+  /* Start scheduler */
+  osKernelStart();
+  
+  /* We should never get here as control is now taken by the scheduler */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+
+  /* USER CODE END WHILE */
+
+  /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+
+  RCC_OscInitTypeDef RCC_OscInitStruct;
+  RCC_ClkInitTypeDef RCC_ClkInitStruct;
+  RCC_PeriphCLKInitTypeDef PeriphClkInit;
+
+    /**Initializes the CPU, AHB and APB busses clocks 
+    */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+    /**Initializes the CPU, AHB and APB busses clocks 
+    */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+    /**Configure the Systick interrupt time 
+    */
+  HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq()/1000);
+
+    /**Configure the Systick 
+    */
+  HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
+
+  /* SysTick_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(SysTick_IRQn, 15, 0);
+}
+
+/* SPI1 init function */
+static void MX_SPI1_Init(void)
+{
+
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_1LINE;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_LSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
+/* TIM3 init function */
+static void MX_TIM3_Init(void)
+{
+
+  TIM_ClockConfigTypeDef sClockSourceConfig;
+  TIM_MasterConfigTypeDef sMasterConfig;
+
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 0;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
+/* USART3 init function */
+static void MX_USART3_UART_Init(void)
+{
+
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
+/** Configure pins as 
+        * Analog 
+        * Input 
+        * Output
+        * EVENT_OUT
+        * EXTI
+*/
+static void MX_GPIO_Init(void)
+{
+
+  GPIO_InitTypeDef GPIO_InitStruct;
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, HX711_CLK_Pin|TM1638_STB_Pin|BUZZER_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, LED_Pin|GPIO_PIN_1|GPIO_PIN_2|HX711_SCK_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : HX711_DATA_Pin */
+  GPIO_InitStruct.Pin = HX711_DATA_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(HX711_DATA_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : HX711_CLK_Pin BUZZER_Pin */
+  GPIO_InitStruct.Pin = HX711_CLK_Pin|BUZZER_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : TM1638_STB_Pin */
+  GPIO_InitStruct.Pin = TM1638_STB_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(TM1638_STB_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LED_Pin PB1 PB2 HX711_SCK_Pin */
+  GPIO_InitStruct.Pin = LED_Pin|GPIO_PIN_1|GPIO_PIN_2|HX711_SCK_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : HX711_DATAB8_Pin */
+  GPIO_InitStruct.Pin = HX711_DATAB8_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(HX711_DATAB8_GPIO_Port, &GPIO_InitStruct);
+
+}
+
+/* USER CODE BEGIN 4 */
+void StartKeyboardTask(void const * argument )
+{
+	for(;;)
+	{
+		HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
+		osDelay(50);
+//		xSemaphoreTake (xMutex, portMAX_DELAY); // (TickType_t) 10);
+		{
+			switch (tm1638_ReadKeys())
+			{
+				case 1: key = 1; break;
+				case 16: key = 2; break;
+				case 2: key = 3; break; // key 3
+				case 32: key = 4; break;
+				default: key = 0; break;
+			}
+		}
+//		xSemaphoreGive (xMutex);
+		osDelay(50);
+	}
+}
+
+void ShowVar(uint32_t data)
+{
+	tm1638_Clear(0);
+	tm1638_Digit( data ,1);
+	osDelay(200);
+	DynamicBright(10);
+	OldWeight = 65535;
+}
+void SendWeightToUsb(void)
+{
+	char answer[25];
+	union
+	{
+		float f;
+		unsigned char buf[4];
+	}tmp;
+	tmp.f = Weight;
+	dataToSend[0] = 'W';
+	dataToSend[1] = ':';
+	dataToSend[6] = '\r';
+	dataToSend[7] = '\n';
+	for (uint8_t i=0;i<4;i++) dataToSend[i+2] = tmp.buf[i];
+	CDC_Transmit_FS((unsigned char*)dataToSend, 8);
+	snprintf(answer, sizeof(answer),"WEIGHT:%4.2f\n\r",Weight);
+	CDC_Transmit_FS(answer, strlen(answer));
+	CDC_Transmit_FS('\0', 0);
+}
+void ProcessUsbFlag(void)
+{
+	char answer[25];
+	switch (flag_usb )
+	{
+		case TARE_FLAG:
+		{
+			beep(5);
+			osDelay(55);
+			beep(5);
+			ZeroLevel = middle; // 000g
+			_100gLevel = Real100gLevel;
+			_200gLevel = Real200gLevel;
+			Calibrate(value);
+			snprintf(answer, sizeof(answer),"TARE:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+		} break;
+		case WEIGHT_FLAG:
+		{
+			SendWeightToUsb();
+			flag_usb = 0;
+		} break;
+		case INFO_FLAG:
+		{
+			beep(5);
+			osDelay(55);
+			beep(5);
+			CDC_Transmit_FS(info_page, strlen(info_page));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+			bulk_mode = 0;
+		} break;
+		case TARE100_FLAG:
+		{
+			beep(5);
+			Real100gLevel =  middle; // 100g
+			snprintf(answer, sizeof(answer),"TARE100:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+		} break;
+		case TARE200_FLAG:
+		{
+			beep(5);
+			Real200gLevel =  middle; // 200g
+			snprintf(answer, sizeof(answer),"TARE200:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+		} break;
+		case SAVE_CAL_FLAG:
+		{
+			beep(5);
+			osDelay(100);
+			beep(5);
+
+			_100gLevel = Real100gLevel;
+			_200gLevel = Real200gLevel;
+			Calibrate(value);
+			WriteConstantToEEP();
+
+			snprintf(answer, sizeof(answer),"SAVED:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+		} break;
+		case LOAD_FLAG:
+		{
+			beep(5);
+			osDelay(100);
+			beep(5);
+			ReadConstantsFromEEP();
+			snprintf(answer, sizeof(answer),"LOADED:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+		} break;
+		case BULK_ON_FLAG:
+		{
+			beep(5);
+			bulk_mode = 1;
+			snprintf(answer, sizeof(answer),"BULK_ON:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			EE_Write(EE_BulkMode, 1);
+			flag_usb = 0;
+		} break;
+		case BULK_OFF_FLAG:
+		{
+			beep(5);
+			bulk_mode = 0;
+			snprintf(answer, sizeof(answer),"BULK_OFF:OK\n\r");
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			EE_Write(EE_BulkMode, 0);
+			flag_usb = 0;
+		} break;
+		case CONFIG_FLAG:
+		{
+			beep(5);
+			ReadConstantsFromEEP();
+			snprintf(answer, sizeof(answer),"BULK_ON:%d;CFG1:%lu;CFG2:%lu;ZERO:%lu\n\r",bulk_mode,Real100gLevel,Real200gLevel,ZeroLevel);
+			CDC_Transmit_FS(answer, strlen(answer));
+			CDC_Transmit_FS('\0', 0);
+			flag_usb = 0;
+		} break;
+	} // end switch
+}
+/* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used 
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
+
+  /* USER CODE BEGIN 5 */
+	beep(10);
+	tm1638_Clear(0);
+	tm1638_Digit(111111,1);
+	Calibrate(ReadCount());
+	xMutex = xSemaphoreCreateMutex ();
+
+  /* Infinite loop */
+
+	for(;;)
+	{
+		value = ReadCount();
+		Data = middle = GetMiddleFilterValue(value);
+		ProcessUsbFlag();
+		if (bulk_mode ) SendWeightToUsb();
+//			  xReleaseLockHandle = osSemaphoreCreate(osSemaphore(xReleaseLock), 1);
+		{
+			xSemaphoreTake (xMutex, portMAX_DELAY); // (TickType_t) 10);
+			switch (key)
+			{
+				case 1:
+				{
+					beep(5);
+					ZeroLevel = middle; // 000g
+					_100gLevel = Real100gLevel;
+					_200gLevel = Real200gLevel;
+					Calibrate(value);
+
+					ShowVar(middle);
+					tm1638_Clear(0);
+					tm1638_Digit( 1 ,3);
+					osDelay(200);
+					key=0;
+				} break; // Set ZERO (weight on scales must equ ZERO)
+				case 2:
+				{
+					beep(5);
+					Real100gLevel =  middle; // 100g
+					ShowVar(middle);
+					tm1638_Clear(0);
+					tm1638_Digit( 2,3);
+					osDelay(200);
+					key=0;
+				} break; // Set 100g LEVEL (weight on scales must equ 100 gramm )
+				case 3:
+				{
+					beep(5);
+					Real200gLevel =  middle; // 200g
+					ShowVar(middle);
+					tm1638_Clear(0);
+					tm1638_Digit( 3 ,3);
+					osDelay(200);
+					key=0;
+				} break; // Set 200g LEVEL (weight on scales must equ 200 gramm )
+				case 4:
+				{
+					beep(5);
+					osDelay(100);
+					beep(5);
+					_100gLevel = Real100gLevel;
+					_200gLevel = Real200gLevel;
+					Calibrate(value);
+					WriteConstantToEEP();
+					for (uint8_t i = 1; i<7; i++)
+					{
+						tm1638_Clear(0);
+						tm1638_Digit(0 ,i);
+						osDelay(100);
+					}
+					for (uint8_t i = 6; i>0; i--)
+					{
+						tm1638_Clear(0);
+						tm1638_Digit(8 ,i);
+						osDelay(80);
+					}
+					OldWeight = 65535;
+					key=0;
+				} break;
+				default: // show
+				{
+					Weight = (Real200gLevel!=Real100gLevel) ? (float)(Data - RealZeroLevel)/(float)(Real200gLevel - Real100gLevel) * 1000.0f : 0.0f;
+					if (Weight < 0)
+					{
+						Weight = 0;
+					}
+					if  (Weight != OldWeight)
+					{
+						tm1638_Clear(0);
+						tm1638_FloatDigit(Weight ,1,1,ALIGMENT);
+						OldWeight = Weight ;
+					}
+				}
+			} // end switch
+			xSemaphoreGive (xMutex);
+		}
+		osDelay(1);
+	}
+  /* USER CODE END 5 */ 
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM4 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM4) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @param  file: The file name as string.
+  * @param  line: The line in file as a number.
+  * @retval None
+  */
+void _Error_Handler(char *file, int line)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  while(1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t* file, uint32_t line)
+{ 
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
+
+/**
+  * @}
+  */
+
+/**
+  * @}
+  */
+
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
