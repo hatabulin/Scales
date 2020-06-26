@@ -88,22 +88,18 @@ void spi_Read_Reg(unsigned char data_mas[]);
 void DynamicBright(unsigned char num);
 
 #define WEIGHT_FLAG 				1
-#define TARE_FLAG					2
-#define SCALE1KG_FLAG				3
-#define SCALE100G_FLAG				4
 #define INFO_FLAG					5
 #define TARE1KG_FLAG				6
 #define TARE2KG_FLAG				7
-#define TARE100_FLAG				8
-#define TARE200_FLAG				9
-#define SAVE_CFG_FLAG				10
-#define LOAD_CFG_FLAG				11
-#define BULK_ON_FLAG				12
-#define BULK_OFF_FLAG				13
-#define CONFIG_FLAG					14
-#define TARExxxG_FLAG				15
-#define TARE1_GRAMM_FLAG			16
-#define TARE2_GRAMM_FLAG			17
+#define TARE_FLAG					2
+#define SAVE_CFG_FLAG				8
+#define BULK_ON_FLAG				10
+#define BULK_OFF_FLAG				11
+#define CONFIG_FLAG					12
+#define SCALES_FLAG					13
+#define AUTOTAR0_FLAG				14
+#define AUTOTAR1_FLAG				15
+#define CONTINUE_FLAG				16
 
 //#define CNT_SHOW_WEIGHT 			100
 //#define CNT_WEIGHT_TO_USB 			250
