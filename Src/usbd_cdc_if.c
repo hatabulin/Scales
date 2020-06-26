@@ -61,8 +61,9 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-extern uint8_t flag_usb,old_flag_usb ;
-extern uint16_t taring_etalon_weight;
+extern uint8_t flag_usb;
+#define MAX_FLAGS 13
+const char* cArray[MAX_FLAGS] = {"WEIGHT", "INFO","TARE1KG","TARE2KG","TARE","SAVE_CFG","BULK_ON","BULK_OFF","CONFIG","SCALES","AUTO_TAR:0","AUTO_TAR:1","CONTINUE"};
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -298,115 +299,20 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
     char str_rx[21];
     char _data[3];
 
+    flag_usb = 0;
+
     strncpy(str_rx,(char*)Buf,*Len);
 
-	index = strstr(str_rx,"WEIGHT");
-    if(index!=NULL)
-    {
-    	flag_usb = WEIGHT_FLAG;
-    	goto EXIT;
+    for (uint8_t i=0; i<MAX_FLAGS; i++) {
+    	index = strstr(str_rx,cArray[i]);
+    	if (index!=NULL) {
+    		flag_usb = i +1;
+    		USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+    		return (USBD_OK);
+    	}
     }
-	index = strstr(str_rx,"INFO");
-    if(index!=NULL)
-    {
-    	flag_usb = INFO_FLAG;
-    	goto EXIT;
-    }
-	index = strstr(str_rx,"TARE1KG");
-    if(index!=NULL)
-    {
-    	flag_usb = TARE1KG_FLAG;
-    	goto EXIT;
-    }
-    index = strstr(str_rx,"TARE2KG");
-    if(index!=NULL)
-    {
-    	flag_usb = TARE2KG_FLAG;
-    	goto EXIT;
-    }
-    index = strstr(str_rx,"TARE1_");
-    if(index!=NULL)
-    {
-		strcpy(_data,str_rx + 6);
-		taring_etalon_weight = atoi(_data);
-		flag_usb = TARE1_GRAMM_FLAG;
-		goto EXIT;
-    }
-    index = strstr(str_rx,"TARE2_");
-    if(index!=NULL)
-    {
-		strcpy(_data,str_rx + 6);
-		taring_etalon_weight = atoi(_data);
-		flag_usb = TARE2_GRAMM_FLAG;
-		goto EXIT;
-    }
-    index = strstr(str_rx,"TARE");
-    if(index!=NULL)
-    {
-		flag_usb = TARE_FLAG;
-		goto EXIT;
-    }
-    index = strstr(str_rx,"SAVE_CFG");
-    if(index!=NULL)
-    {
-    	flag_usb = SAVE_CFG_FLAG;
-    	goto EXIT;
-    }
-	index = strstr(str_rx,"BULK_ON");
-    if(index!=NULL)
-    {
-    	flag_usb = BULK_ON_FLAG;
-    	goto EXIT;
-    }
-	index = strstr(str_rx,"BULK_OFF");
-    if(index!=NULL)
-    {
-    	flag_usb = BULK_OFF_FLAG;
-    	goto EXIT;
-    }
-    index = strstr(str_rx,"CONFIG");
-    if(index!=NULL)
-    {
-    	flag_usb = CONFIG_FLAG;
-    	goto EXIT;
-    }
-	index = strstr(str_rx,"SCALES");
-	if(index!=NULL)
-	{
-		beep(2);
-		auto_taring_mode = 0;
-		CDC_Transmit_FS((uint8_t*)"SCALES\n", 7);
-		CDC_Transmit_FS('\0', 0);
-		goto EXIT;
-	}
-    index = strstr(str_rx,"AUTO_TAR:1");
-    if(index!=NULL)
-    {
-    	beep(2);
-		auto_taring_mode = 1;
-    	CDC_Transmit_FS((uint8_t*)"AUTO_TAR:1\n\rPlease Save Me !\n\r", (uint8_t)30);
-		CDC_Transmit_FS('\0', 0);
-		goto EXIT;
-    }
-	index = strstr(str_rx,"AUTO_TAR:0");
-	if(index!=NULL)
-	{
-		beep(2);
-		auto_taring_mode = 0;
-		CDC_Transmit_FS((uint8_t*)"AUTO_TAR:0\n\rPlease Save Me !\n\r", 30);
-		CDC_Transmit_FS('\0', 0);
-		goto EXIT;
-	}
-	index = strstr(str_rx,"CONTINUE");
-	if(index!=NULL)
-	{
-		beep(2);
-		flag_usb = 0;
-		old_flag_usb=0;
-	}
-EXIT:
 	USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-  return (USBD_OK);
+	return (USBD_OK);
   /* USER CODE END 6 */
 }
 
