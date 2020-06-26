@@ -446,6 +446,29 @@ void ProcessUsbFlag(void) {
 		CDC_Transmit_FS('\0', 0);
 		EE_Write(EE_BulkMode, 0);
 		break;
+	case SCALES_FLAG:
+		beep(2);
+		auto_taring_mode = 0;
+		CDC_Transmit_FS((uint8_t*)"SCALES\n", 7);
+		CDC_Transmit_FS('\0', 0);
+		break;
+	case AUTOTAR1_FLAG:
+		beep(2);
+		auto_taring_mode = 1;
+		CDC_Transmit_FS((uint8_t*)"AUTO_TAR:1\n\rPlease Save Me !\n\r", (uint8_t)30);
+		CDC_Transmit_FS('\0', 0);
+		break;
+	case AUTOTAR0_FLAG:
+		beep(2);
+		auto_taring_mode = 0;
+		CDC_Transmit_FS((uint8_t*)"AUTO_TAR:1\n\rPlease Save Me !\n\r", (uint8_t)30);
+		CDC_Transmit_FS('\0', 0);
+		break;
+	case CONTINUE_FLAG:
+		beep(2);
+		flag_usb = 0;
+		old_flag_usb=0;
+		break;
 	} // end switch
 }
 
